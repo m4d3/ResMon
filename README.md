@@ -1,6 +1,19 @@
-# ResMon
+<p align="center">
+  <img src="assets/resmon-header-128.png" alt="ResMon logo" width="128" height="128">
+</p>
 
-A deliberately lightweight Windows 11 resource monitor implemented in native C++/Win32 with Direct2D/DirectWrite.
+<h1 align="center">ResMon</h1>
+
+<p align="center">
+  A deliberately lightweight Windows 11 resource monitor,<br>
+  implemented in native C++/Win32 with Direct2D/DirectWrite.
+</p>
+
+<p align="center">
+  <a href="https://github.com/m4d3/ResMon/releases/latest"><img src="https://img.shields.io/github/v/release/m4d3/ResMon?style=flat-square&color=0a66ff" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/m4d3/ResMon?style=flat-square&color=0a66ff" alt="MIT licence"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0a66ff?style=flat-square" alt="Windows 11 x64">
+</p>
 
 ## Download
 
