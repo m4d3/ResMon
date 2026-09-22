@@ -15,6 +15,10 @@
   <img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0a66ff?style=flat-square" alt="Windows 11 x64">
 </p>
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="ResMon running on the Windows 11 desktop, showing CPU, GPU and RAM rows with usage, temperature and clock columns" width="400">
+</p>
+
 ## Download
 
 **[Download the latest release](https://github.com/m4d3/ResMon/releases/latest)** — `ResMon-<version>-win-x64.zip`
