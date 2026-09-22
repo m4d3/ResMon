@@ -106,46 +106,4 @@ See `THIRD_PARTY.md`. PawnIO and the PawnIO modules are embedded at build time. 
 
 `PACKAGE_MSIX.ps1` creates an unsigned MSIX from the built EXE. Low-level driver installation has additional Store policy/signing considerations, so the ordinary EXE build is the recommended distribution path for the enhanced CPU-temperature version.
 
-## Release notes
-
-### 1.7.5 narrower widget, blank-header fix
-
-- **Fixes a blank header after toggling rows.** Resizing the window discards the Direct2D render target's contents, but only the metric area below the header was being invalidated, so the logo, title and update-rate text were left unpainted until something else forced a redraw. Every resize now repaints the whole window.
-- **The widget is 292 DIP wide instead of 344** — about 15% narrower — with no change to the columns or the font size.
-- **NET and DISK rows now start at the percentage column.** Neither row has a percentage or a temperature reading, so those two columns were always blank on them; using that space is what made the narrower window possible, since the network and disk strings are the longest in the widget.
-- Column geometry for CPU/GPU/RAM is unchanged, so the numbers still line up for scanning.
-- The version stamped into `ResMon.exe` is now derived from the CMake project version instead of being hard-coded separately in the resource script.
-
-### 1.7.4 logo rendering fix
-
-- The header logo is no longer a GDI/static child control. It is decoded once with the Windows Imaging Component (WIC), cached as a Direct2D bitmap, and drawn in the same Direct2D pass as the UI.
-- Uses the supplied transparent 128 px logo asset, embedded directly in `ResMon.exe`; no runtime asset file or image library is required.
-- Normal metric/tween updates invalidate only the metric area starting below the header, so the logo/title are not repainted during ordinary resource updates. They repaint only when Windows actually invalidates the header (for example after uncovering the window, DPI changes, theme changes, or resizing).
-- Header logo remains 27 DIP (1.5x the original 18 DIP) and the overall window dimensions remain unchanged.
-
-
-### 1.7.3
-
-- Enlarges the header logo from 18 DIP to **27 DIP (1.5x)** without changing the widget dimensions.
-- Moves the logo into its own native child icon control so metric/tween repaints no longer redraw it. This removes the visible icon flicker during updates.
-- Shifts the `ResMon` title slightly right to preserve comfortable spacing.
-- Keeps the enhanced Intel/AMD CPU temperature and native NVIDIA NVML GPU-temperature support from 1.7.x.
-
-### 1.7.1
-
-- CPU and GPU temperatures now live in their own fixed column directly after the usage-percentage column.
-- CPU layout: `CPU | usage % | temperature | clock`.
-- GPU layout: `GPU | usage % | temperature | NVIDIA/detail`.
-- RAM keeps the same aligned percentage/detail columns with an intentionally blank temperature cell.
-- The old standalone TEMP row has been removed; the Temperature option now toggles the inline temperature column without changing window height.
-- CPU/GPU temperature backends are only sampled when the temperature column and matching hardware row are enabled.
-
-### 1.7.0
-
-- Adds **Rows** to the right-click menu. CPU, GPU, RAM, Network, and Disk I/O can each be shown or hidden; Temperature controls the inline CPU/GPU temperature column.
-- The widget resizes automatically to enabled rows; toggling the Temperature column does not change height. Choices are preserved in `%LOCALAPPDATA%\ResMon\settings.ini`.
-- Hidden GPU/network/disk rows and a disabled temperature column skip their corresponding PDH or temperature collection where practical.
-- Adds native **NVIDIA GPU temperature** support through NVML. ResMon dynamically loads the `nvml.dll` that ships with supported NVIDIA drivers and queries the GPU die temperature directly. No NVIDIA SDK DLL is bundled and ResMon does not spawn `nvidia-smi`.
-- Keeps optional enhanced CPU temperatures via PawnIO for Intel/AMD, with Windows ACPI thermal-zone fallback.
-- Keeps fixed numeric columns, dark/light themes, native opacity control, and short-lived eased transitions.
-
+_Release notes for the current version are on the [releases page](https://github.com/m4d3/ResMon/releases/latest)._

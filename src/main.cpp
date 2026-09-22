@@ -19,8 +19,8 @@
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
-#include <cwctype>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -52,6 +52,7 @@ constexpr int kMaxOpacityPercent = 100;
 constexpr int kWidthDip = 292;
 constexpr int kHeaderHeightDip = 54;
 constexpr int kHeaderLogoDip = 27;
+constexpr int kHeaderDragHeightDip = 36; // Top strip that drags the window.
 constexpr int kRowHeightDip = 28;
 constexpr UINT_PTR kSampleTimer = 1;
 constexpr UINT_PTR kAnimationTimer = 2;
@@ -194,41 +195,64 @@ Settings LoadSettings() {
     return s;
 }
 
-void SaveSettings(const Settings& s, HWND hwnd) {
+// Taken by value: the live window position is folded in locally so that a
+// failed GetWindowRect simply rewrites the position that was loaded, rather
+// than dropping it.
+void SaveSettings(Settings s, HWND hwnd) {
     const auto path = GetConfigPath();
-    wchar_t buf[32]{};
-
-    swprintf_s(buf, L"%d", s.intervalMs);
-    WritePrivateProfileStringW(L"monitor", L"interval_ms", buf, path.c_str());
-    WritePrivateProfileStringW(L"rows", L"cpu", s.showCpu ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"rows", L"gpu", s.showGpu ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"rows", L"ram", s.showRam ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"rows", L"temp", s.showTemp ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"rows", L"net", s.showNet ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"rows", L"disk", s.showDisk ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"monitor", L"show_disk", s.showDisk ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"window", L"topmost", s.topMost ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"window", L"theme", s.theme == ThemeMode::Light ? L"1" : L"0", path.c_str());
-    swprintf_s(buf, L"%d", s.opacityPercent);
-    WritePrivateProfileStringW(L"window", L"opacity", buf, path.c_str());
 
     RECT r{};
     if (hwnd && GetWindowRect(hwnd, &r)) {
-        WritePrivateProfileStringW(L"window", L"has_position", L"1", path.c_str());
-        swprintf_s(buf, L"%ld", r.left);
-        WritePrivateProfileStringW(L"window", L"x", buf, path.c_str());
-        swprintf_s(buf, L"%ld", r.top);
-        WritePrivateProfileStringW(L"window", L"y", buf, path.c_str());
+        s.hasPosition = true;
+        s.x = r.left;
+        s.y = r.top;
     }
+
+    auto entry = [](const wchar_t* key, int value) {
+        wchar_t buf[64]{};
+        swprintf_s(buf, L"%s=%d", key, value);
+        return std::wstring(buf);
+    };
+
+    // One write per section rather than one per key. Every
+    // WritePrivateProfileStringW call re-reads and rewrites the entire file, so
+    // the old per-key form rewrote settings.ini fourteen times per menu click.
+    auto writeSection = [&path](const wchar_t* section, std::initializer_list<std::wstring> entries) {
+        std::wstring block;
+        for (const auto& e : entries) {
+            block.append(e);
+            block.push_back(L'\0');
+        }
+        block.push_back(L'\0'); // Section buffers are double-null terminated.
+        WritePrivateProfileSectionW(section, block.c_str(), path.c_str());
+    };
+
+    writeSection(L"monitor", {entry(L"interval_ms", s.intervalMs)});
+    writeSection(L"rows", {
+        entry(L"cpu", s.showCpu ? 1 : 0),
+        entry(L"gpu", s.showGpu ? 1 : 0),
+        entry(L"ram", s.showRam ? 1 : 0),
+        entry(L"temp", s.showTemp ? 1 : 0),
+        entry(L"net", s.showNet ? 1 : 0),
+        entry(L"disk", s.showDisk ? 1 : 0),
+    });
+    writeSection(L"window", {
+        entry(L"topmost", s.topMost ? 1 : 0),
+        entry(L"theme", s.theme == ThemeMode::Light ? 1 : 0),
+        entry(L"opacity", s.opacityPercent),
+        entry(L"has_position", s.hasPosition ? 1 : 0),
+        entry(L"x", s.x),
+        entry(L"y", s.y),
+    });
 }
 
 bool IsAutostartEnabled() {
     HKEY key{};
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) return false;
-    wchar_t value[32768]{};
+    // Only the existence and type matter, so no value buffer is requested. The
+    // previous 64 KB stack buffer also reported "disabled" for a long value.
     DWORD type = 0;
-    DWORD size = sizeof(value);
-    const LONG result = RegQueryValueExW(key, kRunValue, nullptr, &type, reinterpret_cast<BYTE*>(value), &size);
+    const LONG result = RegQueryValueExW(key, kRunValue, nullptr, &type, nullptr, nullptr);
     RegCloseKey(key);
     return result == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ);
 }
@@ -636,19 +660,82 @@ private:
         initialized_ = false;
         if (module_) FreeLibrary(module_);
         module_ = nullptr;
+        // Clear the entry points too; they point into the module that was just
+        // unloaded, and Reset() allows a later Initialize() to run again.
+        shutdown_ = nullptr;
+        getCount_ = nullptr;
+        getHandleByIndex_ = nullptr;
+        getTemperature_ = nullptr;
+        getTemperatureV_ = nullptr;
     }
 };
+
+// Creates a freshly named directory under %TEMP%. Extracting the installer to a
+// predictable path and then launching it elevated would let another process
+// running as the same user swap the file in between and have it run as admin.
+std::filesystem::path CreateUniqueTempDirectory() {
+    wchar_t tempDir[MAX_PATH]{};
+    if (!GetTempPathW(MAX_PATH, tempDir)) return {};
+    GUID guid{};
+    if (FAILED(CoCreateGuid(&guid))) return {};
+    wchar_t name[64]{};
+    swprintf_s(name, L"ResMon_%08lX%04hX%04hX", guid.Data1, guid.Data2, guid.Data3);
+    const std::filesystem::path dir = std::filesystem::path(tempDir) / name;
+    std::error_code ec;
+    // create_directory reports false when the directory already existed, so a
+    // successful call means this process created it.
+    if (!std::filesystem::create_directory(dir, ec) || ec) return {};
+    return dir;
+}
+
+// Waits for the installer while keeping the widget painting. Input to the owner
+// window is disabled for the duration so that pumping messages cannot re-enter
+// the menu and start a second installation.
+void WaitForProcessKeepingUiAlive(HANDLE process, HWND owner) {
+    const BOOL wasEnabled = owner ? IsWindowEnabled(owner) : FALSE;
+    if (owner && wasEnabled) EnableWindow(owner, FALSE);
+
+    bool quitSeen = false;
+    int quitCode = 0;
+    for (;;) {
+        const DWORD wait = MsgWaitForMultipleObjects(1, &process, FALSE, INFINITE, QS_ALLINPUT);
+        if (wait != WAIT_OBJECT_0 + 1) break; // Process exited, or the wait failed.
+        MSG msg{};
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                quitSeen = true;
+                quitCode = static_cast<int>(msg.wParam);
+                break;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        if (quitSeen) {
+            // Let the installer finish, then put WM_QUIT back for the main loop.
+            WaitForSingleObject(process, INFINITE);
+            break;
+        }
+    }
+
+    if (owner && wasEnabled && IsWindow(owner)) EnableWindow(owner, TRUE);
+    if (quitSeen) PostQuitMessage(quitCode);
+}
 
 bool InstallPawnIoFromEmbeddedSetup(HWND owner, DWORD& exitCode, std::wstring& detail) {
     exitCode = ERROR_GEN_FAILURE;
     detail.clear();
-    wchar_t tempDir[MAX_PATH]{};
-    if (!GetTempPathW(MAX_PATH, tempDir)) {
-        detail = L"Could not locate the Windows temporary folder.";
+    const std::filesystem::path workDir = CreateUniqueTempDirectory();
+    if (workDir.empty()) {
+        detail = L"Could not create a temporary folder for the PawnIO installer.";
         return false;
     }
-    const std::filesystem::path installer = std::filesystem::path(tempDir) / L"ResMon_PawnIO_2.2.0_setup.exe";
+    const std::filesystem::path installer = workDir / L"PawnIO_setup.exe";
+    auto cleanup = [&workDir]() {
+        std::error_code ec;
+        std::filesystem::remove_all(workDir, ec);
+    };
     if (!WriteEmbeddedResourceToFile(IDR_PAWNIO_SETUP, installer.wstring())) {
+        cleanup();
         detail = L"The embedded PawnIO installer could not be extracted.";
         return false;
     }
@@ -662,15 +749,15 @@ bool InstallPawnIoFromEmbeddedSetup(HWND owner, DWORD& exitCode, std::wstring& d
     sei.nShow = SW_SHOWNORMAL;
     if (!ShellExecuteExW(&sei)) {
         const DWORD error = GetLastError();
-        DeleteFileW(installer.c_str());
+        cleanup();
         exitCode = error;
         detail = error == ERROR_CANCELLED ? L"Installation was cancelled." : L"Windows could not start the PawnIO installer.";
         return false;
     }
-    WaitForSingleObject(sei.hProcess, INFINITE);
+    WaitForProcessKeepingUiAlive(sei.hProcess, owner);
     GetExitCodeProcess(sei.hProcess, &exitCode);
     CloseHandle(sei.hProcess);
-    DeleteFileW(installer.c_str());
+    cleanup();
     if (exitCode == ERROR_SUCCESS) return true;
     if (exitCode == ERROR_SUCCESS_REBOOT_REQUIRED) {
         detail = L"PawnIO installed successfully, but Windows requested a restart.";
@@ -718,6 +805,11 @@ public:
         enhancedThermal_.Initialize();
     }
 
+    // Owns raw PDH query handles that are closed in the destructor, so copying
+    // one would close them twice.
+    MetricsSampler(const MetricsSampler&) = delete;
+    MetricsSampler& operator=(const MetricsSampler&) = delete;
+
     ~MetricsSampler() {
         if (gpuQuery_) PdhCloseQuery(gpuQuery_);
         if (netQuery_) PdhCloseQuery(netQuery_);
@@ -725,12 +817,14 @@ public:
         if (thermalQuery_) PdhCloseQuery(thermalQuery_);
     }
 
-    Snapshot Sample(double elapsedSeconds, const SampleOptions& options) {
+    // PDH derives its own rates from the interval between collections, so the
+    // sampler does not need to be told how much time has passed.
+    Snapshot Sample(const SampleOptions& options) {
         Snapshot out{};
+        const ULONGLONG now = GetTickCount64();
         const double cpuNow = SampleCpu(); // Keep the baseline current even when the CPU row is hidden.
         if (options.cpu) {
             out.cpu = cpuNow;
-            const ULONGLONG now = GetTickCount64();
             if (cachedCpuMhz_ <= 0.0 || now - lastFrequencyTick_ >= 10000) {
                 cachedCpuMhz_ = SampleCpuFrequency();
                 lastFrequencyTick_ = now;
@@ -738,8 +832,6 @@ public:
             out.cpuMhz = cachedCpuMhz_;
         }
         if (options.ram) SampleMemory(out);
-        const ULONGLONG now = GetTickCount64();
-        (void)elapsedSeconds;
         SamplePdh(out, options.gpu, options.net, options.disk);
         if (options.temp && (options.cpu || options.gpu)) {
             SampleTemperatures(out, now, options.cpu, options.gpu);
@@ -844,9 +936,21 @@ private:
             info.data(),
             static_cast<ULONG>(info.size() * sizeof(ProcessorPowerInformationEntry)));
         if (status != 0) return 0.0;
+        // The buffer is sized for every processor so it can never be too small,
+        // but CallNtPowerInformation only fills entries for the calling thread's
+        // processor group. Averaging over the whole buffer therefore divided by
+        // too many entries on machines with more than 64 logical processors and
+        // reported a fraction of the real clock. Only entries the call actually
+        // populated are counted; a real processor always reports a MaxMhz.
         double sum = 0.0;
-        for (const auto& p : info) sum += p.CurrentMhz;
-        return sum / static_cast<double>(info.size());
+        size_t populated = 0;
+        for (const auto& p : info) {
+            if (p.MaxMhz == 0) continue;
+            sum += p.CurrentMhz;
+            ++populated;
+        }
+        if (populated == 0) return 0.0;
+        return sum / static_cast<double>(populated);
     }
 
     void InitPdh() {
@@ -903,16 +1007,31 @@ private:
         return std::max(0.0, value.doubleValue);
     }
 
-    static double ReadCounterArraySum(PDH_HCOUNTER counter) {
-        if (!counter) return 0.0;
+    // Fetches a counter's instance array into `buffer` and returns the item
+    // pointer plus the item count, or nullptr when the counter is unavailable.
+    static PDH_FMT_COUNTERVALUE_ITEM_W* ReadCounterArray(PDH_HCOUNTER counter,
+                                                        std::vector<BYTE>& buffer,
+                                                        DWORD& count) {
+        count = 0;
+        if (!counter) return nullptr;
         DWORD bytes = 0;
-        DWORD count = 0;
         PDH_STATUS status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bytes, &count, nullptr);
-        if (status != PDH_MORE_DATA || bytes == 0) return 0.0;
-        std::vector<BYTE> buffer(bytes);
+        if (status != PDH_MORE_DATA || bytes == 0) return nullptr;
+        buffer.assign(bytes, 0);
         auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
         status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bytes, &count, items);
-        if (status != ERROR_SUCCESS) return 0.0;
+        if (status != ERROR_SUCCESS) {
+            count = 0;
+            return nullptr;
+        }
+        return items;
+    }
+
+    static double ReadCounterArraySum(PDH_HCOUNTER counter) {
+        std::vector<BYTE> buffer;
+        DWORD count = 0;
+        const auto* items = ReadCounterArray(counter, buffer, count);
+        if (!items) return 0.0;
 
         double total = 0.0;
         for (DWORD i = 0; i < count; ++i) {
@@ -924,25 +1043,18 @@ private:
 
     static bool ContainsInsensitive(const wchar_t* text, const wchar_t* needle) {
         if (!text || !needle) return false;
-        std::wstring hay(text);
-        std::wstring ndl(needle);
-        auto lower = [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); };
-        std::transform(hay.begin(), hay.end(), hay.begin(), lower);
-        std::transform(ndl.begin(), ndl.end(), ndl.begin(), lower);
-        return hay.find(ndl) != std::wstring::npos;
+        // Searches in place. The previous implementation copied and lower-cased
+        // both strings on every call, and ReadGpu calls this twice for every
+        // counter instance - several hundred of them on a typical machine.
+        return StrStrIW(text, needle) != nullptr;
     }
 
     double ReadGpu(bool& available) {
         available = false;
-        if (!gpuCounter_) return 0.0;
-        DWORD bytes = 0;
+        std::vector<BYTE> buffer;
         DWORD count = 0;
-        PDH_STATUS status = PdhGetFormattedCounterArrayW(gpuCounter_, PDH_FMT_DOUBLE, &bytes, &count, nullptr);
-        if (status != PDH_MORE_DATA || bytes == 0) return 0.0;
-        std::vector<BYTE> buffer(bytes);
-        auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
-        status = PdhGetFormattedCounterArrayW(gpuCounter_, PDH_FMT_DOUBLE, &bytes, &count, items);
-        if (status != ERROR_SUCCESS) return 0.0;
+        const auto* items = ReadCounterArray(gpuCounter_, buffer, count);
+        if (!items) return 0.0;
 
         double preferred = 0.0;
         double fallback = 0.0;
@@ -965,17 +1077,10 @@ private:
 
     bool ReadThermalCelsius(double& hottestC) {
         hottestC = 0.0;
-        if (!thermalCounter_) return false;
-
-        DWORD bytes = 0;
+        std::vector<BYTE> buffer;
         DWORD count = 0;
-        PDH_STATUS status = PdhGetFormattedCounterArrayW(thermalCounter_, PDH_FMT_DOUBLE, &bytes, &count, nullptr);
-        if (status != PDH_MORE_DATA || bytes == 0 || count == 0) return false;
-
-        std::vector<BYTE> buffer(bytes);
-        auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
-        status = PdhGetFormattedCounterArrayW(thermalCounter_, PDH_FMT_DOUBLE, &bytes, &count, items);
-        if (status != ERROR_SUCCESS) return false;
+        const auto* items = ReadCounterArray(thermalCounter_, buffer, count);
+        if (!items) return false;
 
         bool found = false;
         double maxC = -273.15;
@@ -1047,11 +1152,16 @@ public:
     explicit App(HINSTANCE instance) : instance_(instance), settings_(LoadSettings()) {}
 
     int Run() {
-        if (!InitFactories()) return 1;
-        if (!RegisterWindowClass()) return 1;
-        if (!CreateMainWindow()) return 1;
+        // Report startup failures instead of exiting silently, which looked
+        // like the executable simply did nothing.
+        auto fail = [](const wchar_t* what) {
+            MessageBoxW(nullptr, what, kAppName, MB_OK | MB_ICONERROR);
+            return 1;
+        };
+        if (!InitFactories()) return fail(L"ResMon could not initialise Direct2D, DirectWrite or WIC.");
+        if (!RegisterWindowClass()) return fail(L"ResMon could not register its window class.");
+        if (!CreateMainWindow()) return fail(L"ResMon could not create its window.");
 
-        lastTick_ = GetTickCount64();
         SetTimer(hwnd_, kSampleTimer, settings_.intervalMs, nullptr);
         SampleNow();
         ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
@@ -1094,7 +1204,6 @@ private:
     Snapshot displaySnapshot_{};
     bool haveDisplaySnapshot_ = false;
     bool animationActive_ = false;
-    ULONGLONG lastTick_ = 0;
     ULONGLONG lastAnimationTick_ = 0;
 
     ComPtr<ID2D1Factory> d2dFactory_;
@@ -1334,6 +1443,7 @@ private:
                                        reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf())))) return false;
         if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                                     IID_PPV_ARGS(wicFactory_.GetAddressOf())))) return false;
+        if (FAILED(CreateTextFormats())) return false;
         return true;
     }
 
@@ -1462,6 +1572,36 @@ private:
         DwmEnableBlurBehindWindow(hwnd_, &blur);
     }
 
+    // IDWriteTextFormat is device independent, so these are built once and kept
+    // across theme changes and render-target loss. Recreating them in
+    // CreateDeviceResources() also leaked the previous formats, because
+    // ComPtr::GetAddressOf() overwrites the stored pointer without releasing it.
+    HRESULT CreateTextFormats() {
+        struct FormatSpec {
+            const wchar_t* family;
+            DWRITE_FONT_WEIGHT weight;
+            float size;
+            DWRITE_TEXT_ALIGNMENT alignment;
+            ComPtr<IDWriteTextFormat>* target;
+        };
+        const FormatSpec specs[] = {
+            {L"Segoe UI Variable Display", DWRITE_FONT_WEIGHT_SEMI_BOLD, 14.5f, DWRITE_TEXT_ALIGNMENT_LEADING,  &titleFormat_},
+            {L"Segoe UI Variable Text",    DWRITE_FONT_WEIGHT_MEDIUM,    10.0f, DWRITE_TEXT_ALIGNMENT_LEADING,  &labelFormat_},
+            {L"Segoe UI Variable Text",    DWRITE_FONT_WEIGHT_SEMI_BOLD, 10.0f, DWRITE_TEXT_ALIGNMENT_TRAILING, &metricFormat_},
+            {L"Segoe UI Variable Text",    DWRITE_FONT_WEIGHT_NORMAL,    10.0f, DWRITE_TEXT_ALIGNMENT_LEADING,  &valueFormat_},
+            {L"Segoe UI Variable Text",    DWRITE_FONT_WEIGHT_NORMAL,     8.0f, DWRITE_TEXT_ALIGNMENT_TRAILING, &tinyFormat_},
+        };
+        for (const auto& spec : specs) {
+            const HRESULT hr = dwriteFactory_->CreateTextFormat(
+                spec.family, nullptr, spec.weight, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, spec.size, L"",
+                spec.target->ReleaseAndGetAddressOf());
+            if (FAILED(hr)) return hr;
+            (*spec.target)->SetTextAlignment(spec.alignment);
+        }
+        return S_OK;
+    }
+
     HRESULT CreateDeviceResources() {
         if (renderTarget_) return S_OK;
         RECT rc{};
@@ -1494,31 +1634,6 @@ private:
         if (FAILED(hr)) return hr;
         hr = renderTarget_->CreateSolidColorBrush(borderColor, borderBrush_.GetAddressOf());
         if (FAILED(hr)) return hr;
-
-        hr = dwriteFactory_->CreateTextFormat(L"Segoe UI Variable Display", nullptr,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            14.5f, L"", titleFormat_.GetAddressOf());
-        if (FAILED(hr)) return hr;
-        hr = dwriteFactory_->CreateTextFormat(L"Segoe UI Variable Text", nullptr,
-            DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            10.0f, L"", labelFormat_.GetAddressOf());
-        if (FAILED(hr)) return hr;
-        hr = dwriteFactory_->CreateTextFormat(L"Segoe UI Variable Text", nullptr,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            10.0f, L"", metricFormat_.GetAddressOf());
-        if (FAILED(hr)) return hr;
-        hr = dwriteFactory_->CreateTextFormat(L"Segoe UI Variable Text", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            10.0f, L"", valueFormat_.GetAddressOf());
-        if (FAILED(hr)) return hr;
-        hr = dwriteFactory_->CreateTextFormat(L"Segoe UI Variable Text", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            8.0f, L"", tinyFormat_.GetAddressOf());
-        if (FAILED(hr)) return hr;
-
-        metricFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        valueFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        tinyFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
 
         hr = CreateHeaderLogoBitmap();
         if (FAILED(hr)) return hr;
@@ -1682,10 +1797,6 @@ private:
     }
 
     void SampleNow() {
-        const ULONGLONG now = GetTickCount64();
-        double elapsed = (lastTick_ == 0) ? settings_.intervalMs / 1000.0 : (now - lastTick_) / 1000.0;
-        if (elapsed <= 0.0) elapsed = settings_.intervalMs / 1000.0;
-        lastTick_ = now;
         SampleOptions options{};
         options.cpu = settings_.showCpu;
         options.gpu = settings_.showGpu;
@@ -1693,7 +1804,7 @@ private:
         options.temp = settings_.showTemp;
         options.net = settings_.showNet;
         options.disk = settings_.showDisk;
-        targetSnapshot_ = sampler_.Sample(elapsed, options);
+        targetSnapshot_ = sampler_.Sample(options);
         if (!haveDisplaySnapshot_) {
             displaySnapshot_ = targetSnapshot_;
             haveDisplaySnapshot_ = true;
@@ -1906,8 +2017,10 @@ private:
                     kAppName, MB_OK | MB_ICONINFORMATION);
                 break;
             case IDM_EXIT:
+                // WM_DESTROY persists the settings; returning here avoids a
+                // second save through an already-destroyed window handle.
                 DestroyWindow(hwnd_);
-                break;
+                return;
         }
         SaveSettings(settings_, hwnd_);
     }
@@ -1964,7 +2077,7 @@ private:
             }
             case WM_LBUTTONDOWN: {
                 const int y = GET_Y_LPARAM(lParam);
-                if (y < DipToPx(36)) {
+                if (y < DipToPx(kHeaderDragHeightDip)) {
                     ReleaseCapture();
                     SendMessageW(hwnd_, WM_NCLBUTTONDOWN, HTCAPTION, 0);
                 }

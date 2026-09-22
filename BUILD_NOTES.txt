@@ -1,25 +1,46 @@
-ResMon 1.7.5 - narrower widget + blank-header fix
+ResMon 1.7.6 - correctness and efficiency pass
 
-Blank header after toggling rows:
-- SetWindowPos from a row toggle produces WM_SIZE, and ID2D1HwndRenderTarget::Resize
-  discards the render target's contents.
-- The window class has no CS_VREDRAW, so Windows did not invalidate the existing
-  client area, and InvalidateMetrics() only covers the rows below y = 40 DIP.
-- The header strip therefore kept the discarded (blank) pixels until some other
-  event forced a repaint. WM_SIZE now invalidates the whole window.
+Fixed:
+- IDWriteTextFormat leak. DiscardDeviceResources() never reset the five text
+  formats, and CreateDeviceResources() rebuilt them with ComPtr::GetAddressOf(),
+  which overwrites the stored pointer without releasing it. Text formats are
+  device independent, so they are now created once in CreateTextFormats().
+- CPU clock on machines with more than 64 logical processors.
+  CallNtPowerInformation(ProcessorInformation) only fills entries for the
+  calling thread's processor group, but the average divided by the all-groups
+  count, so the zeroed entries dragged the result down. Only populated entries
+  are averaged now.
+- ExecuteCommand saved the settings a second time after IDM_EXIT had already
+  destroyed the window.
 
-Width:
-- kWidthDip is 292 (was 344). Fonts, row height and column positions are unchanged.
-- NET and DISK have no percentage and no temperature, so DrawInfoRow starts their
-  text at the percentage column (60 DIP) instead of the detail column (172 DIP).
-  Those two rows carry the widest strings, so this is what allows the smaller width.
-- Worst-case measured with DirectWrite at 10 DIP: RAM detail "1023.9 GB / 1023.9 GB"
-  needs 95.1 DIP (98.3 DIP with the Segoe UI fallback) against 104 DIP available.
+Efficiency:
+- ContainsInsensitive() used to copy and lower-case both strings on every call,
+  and ReadGpu() calls it twice per GPU counter instance - 648 instances on the
+  development machine, so roughly 2600 wstring allocations every sample. It now
+  uses StrStrIW, which searches in place.
+- SaveSettings() writes one section at a time instead of one key at a time.
+  Each WritePrivateProfileStringW call rewrites the whole file, so a single
+  menu click used to rewrite settings.ini fourteen times.
+- IsAutostartEnabled() no longer allocates a 64 KB stack buffer for a value it
+  discards.
 
-Version:
-- assets/resmon.rc.in takes the version from the CMake project version, so
-  CMakeLists.txt is the single place to bump it.
+Cleanups:
+- MetricsSampler::Sample() no longer takes an unused elapsed-seconds argument;
+  App::lastTick_ existed only to compute it.
+- One helper replaces three copies of the PDH counter-array read sequence.
+- MetricsSampler has copy/assignment deleted; it owns raw PDH query handles.
+- NvidiaTemperatureReader::Shutdown() clears its entry points.
+- The legacy monitor/show_disk key is no longer written; it is still read once
+  so existing settings files migrate.
+- Startup failures show a message box instead of exiting silently.
 
-Everything else from 1.7.x remains: native C++/Win32, optional PawnIO CPU temperatures,
-NVML NVIDIA GPU temperature support, row visibility controls, themes, opacity, and
-short-lived easing.
+Hardening:
+- The embedded PawnIO installer is extracted into a freshly created, randomly
+  named directory under %TEMP% instead of a fixed path, so another process
+  running as the same user cannot swap the file before it is launched elevated.
+- Waiting for the installer pumps messages, with input to the widget disabled,
+  so the window keeps painting instead of being marked "not responding".
+
+Everything else from 1.7.x remains: native C++/Win32, optional PawnIO CPU
+temperatures, NVML NVIDIA GPU temperature support, row visibility controls,
+themes, opacity, and short-lived easing.
