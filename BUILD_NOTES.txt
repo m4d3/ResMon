@@ -1,12 +1,25 @@
-ResMon 1.7.4 - Direct2D/WIC logo rendering fix
+ResMon 1.7.5 - narrower widget + blank-header fix
 
-Header branding:
-- The EXE/window icon still uses the supplied resmon.ico package.
-- The in-app header logo is embedded as a transparent 128 px PNG resource.
-- Windows Imaging Component decodes it once into a cached Direct2D bitmap.
-- There is no child STATIC control and no GDI DrawIconEx path for the header logo.
-- Normal metric/tween repaints invalidate only the rows, leaving the header untouched.
-- Logo size remains 27 DIP; overall window dimensions are unchanged.
+Blank header after toggling rows:
+- SetWindowPos from a row toggle produces WM_SIZE, and ID2D1HwndRenderTarget::Resize
+  discards the render target's contents.
+- The window class has no CS_VREDRAW, so Windows did not invalidate the existing
+  client area, and InvalidateMetrics() only covers the rows below y = 40 DIP.
+- The header strip therefore kept the discarded (blank) pixels until some other
+  event forced a repaint. WM_SIZE now invalidates the whole window.
+
+Width:
+- kWidthDip is 292 (was 344). Fonts, row height and column positions are unchanged.
+- NET and DISK have no percentage and no temperature, so DrawInfoRow starts their
+  text at the percentage column (60 DIP) instead of the detail column (172 DIP).
+  Those two rows carry the widest strings, so this is what allows the smaller width.
+- Worst-case measured with DirectWrite at 10 DIP: RAM detail "1023.9 GB / 1023.9 GB"
+  needs 95.1 DIP (98.3 DIP with the Segoe UI fallback) against 104 DIP available.
+
+Version:
+- assets/resmon.rc.in takes the version from the CMake project version, so
+  CMakeLists.txt is the single place to bump it.
 
 Everything else from 1.7.x remains: native C++/Win32, optional PawnIO CPU temperatures,
-NVML NVIDIA GPU temperature support, row visibility controls, themes, opacity, and short-lived easing.
+NVML NVIDIA GPU temperature support, row visibility controls, themes, opacity, and
+short-lived easing.

@@ -6,8 +6,8 @@
 303 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/vendor/PawnIO_setup.exe"
 401 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/resmon-header-128.png"
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,7,4,0
- PRODUCTVERSION 1,7,4,0
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -24,11 +24,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "ResMon"
             VALUE "FileDescription", "ResMon native resource monitor"
-            VALUE "FileVersion", "1.7.4"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
             VALUE "InternalName", "ResMon"
             VALUE "OriginalFilename", "ResMon.exe"
             VALUE "ProductName", "ResMon"
-            VALUE "ProductVersion", "1.7.4"
+            VALUE "ProductVersion", "@PROJECT_VERSION@"
         END
     END
     BLOCK "VarFileInfo"

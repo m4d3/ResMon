@@ -108,6 +108,14 @@ See `THIRD_PARTY.md`. PawnIO and the PawnIO modules are embedded at build time. 
 
 ## Release notes
 
+### 1.7.5 narrower widget, blank-header fix
+
+- **Fixes a blank header after toggling rows.** Resizing the window discards the Direct2D render target's contents, but only the metric area below the header was being invalidated, so the logo, title and update-rate text were left unpainted until something else forced a redraw. Every resize now repaints the whole window.
+- **The widget is 292 DIP wide instead of 344** — about 15% narrower — with no change to the columns or the font size.
+- **NET and DISK rows now start at the percentage column.** Neither row has a percentage or a temperature reading, so those two columns were always blank on them; using that space is what made the narrower window possible, since the network and disk strings are the longest in the widget.
+- Column geometry for CPU/GPU/RAM is unchanged, so the numbers still line up for scanning.
+- The version stamped into `ResMon.exe` is now derived from the CMake project version instead of being hard-coded separately in the resource script.
+
 ### 1.7.4 logo rendering fix
 
 - The header logo is no longer a GDI/static child control. It is decoded once with the Windows Imaging Component (WIC), cached as a Direct2D bitmap, and drawn in the same Direct2D pass as the UI.

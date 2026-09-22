@@ -49,7 +49,7 @@ constexpr wchar_t kRunValue[] = L"ResMon";
 constexpr int kDefaultOpacityPercent = 100;
 constexpr int kMinOpacityPercent = 55;
 constexpr int kMaxOpacityPercent = 100;
-constexpr int kWidthDip = 344;
+constexpr int kWidthDip = 292;
 constexpr int kHeaderHeightDip = 54;
 constexpr int kHeaderLogoDip = 27;
 constexpr int kRowHeightDip = 28;
@@ -1549,30 +1549,34 @@ private:
         renderTarget_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, top, std::max(left, fill), top + h), 1.0f, 1.0f), accentBrush_.Get());
     }
 
+    // Fixed scan columns: label | percentage/value | temperature | detail.
+    // Keeping the column geometry stable makes CPU/GPU/RAM easy to compare
+    // without the text shifting as sensors appear or disappear.
+    static constexpr float kLabelLeft = 16.0f;
+    static constexpr float kLabelRight = 58.0f;
+    static constexpr float kPrimaryLeft = 60.0f;
+    static constexpr float kPrimaryRight = 108.0f;
+    static constexpr float kTempLeft = 112.0f;
+    static constexpr float kTempRight = 160.0f;
+    static constexpr float kDetailLeft = 172.0f;
+    static constexpr float kRowRight = kWidthDip - 16.0f;
+
     void DrawLoadRow(float y, const wchar_t* label, const std::wstring& primary,
                      const std::wstring& temperature, const std::wstring& detail,
                      double percent, bool bar) {
-        // Fixed scan columns: label | percentage/value | temperature | detail.
-        // Keeping the column geometry stable makes CPU/GPU/RAM easy to compare
-        // without the text shifting as sensors appear or disappear.
-        constexpr float labelLeft = 16.0f;
-        constexpr float labelRight = 58.0f;
-        constexpr float primaryLeft = 60.0f;
-        constexpr float primaryRight = 108.0f;
-        constexpr float tempLeft = 112.0f;
-        constexpr float tempRight = 160.0f;
-        constexpr float detailLeft = 172.0f;
-        constexpr float right = kWidthDip - 16.0f;
-
-        DrawTextSimple(label, labelFormat_.Get(), D2D1::RectF(labelLeft, y, labelRight, y + 18.0f), mutedBrush_.Get());
-        DrawTextSimple(primary, metricFormat_.Get(), D2D1::RectF(primaryLeft, y, primaryRight, y + 18.0f), textBrush_.Get());
-        DrawTextSimple(temperature, metricFormat_.Get(), D2D1::RectF(tempLeft, y, tempRight, y + 18.0f), textBrush_.Get());
-        DrawTextSimple(detail, valueFormat_.Get(), D2D1::RectF(detailLeft, y, right, y + 18.0f), textBrush_.Get());
-        if (bar) DrawBar(primaryLeft, y + 19.5f, right, static_cast<float>(percent));
+        DrawTextSimple(label, labelFormat_.Get(), D2D1::RectF(kLabelLeft, y, kLabelRight, y + 18.0f), mutedBrush_.Get());
+        DrawTextSimple(primary, metricFormat_.Get(), D2D1::RectF(kPrimaryLeft, y, kPrimaryRight, y + 18.0f), textBrush_.Get());
+        DrawTextSimple(temperature, metricFormat_.Get(), D2D1::RectF(kTempLeft, y, kTempRight, y + 18.0f), textBrush_.Get());
+        DrawTextSimple(detail, valueFormat_.Get(), D2D1::RectF(kDetailLeft, y, kRowRight, y + 18.0f), textBrush_.Get());
+        if (bar) DrawBar(kPrimaryLeft, y + 19.5f, kRowRight, static_cast<float>(percent));
     }
 
-    void DrawInfoRow(float y, const wchar_t* label, const std::wstring& primary, const std::wstring& detail) {
-        DrawLoadRow(y, label, primary, L"", detail, 0.0, false);
+    // NET and DISK have no percentage and no temperature reading, so their text
+    // starts at the percentage column instead of leaving those two columns
+    // blank. That reclaims the widest run of dead space in the widget.
+    void DrawInfoRow(float y, const wchar_t* label, const std::wstring& detail) {
+        DrawTextSimple(label, labelFormat_.Get(), D2D1::RectF(kLabelLeft, y, kLabelRight, y + 18.0f), mutedBrush_.Get());
+        DrawTextSimple(detail, valueFormat_.Get(), D2D1::RectF(kPrimaryLeft, y, kRowRight, y + 18.0f), textBrush_.Get());
     }
 
     void Render(const RECT& paintRectPx) {
@@ -1653,13 +1657,13 @@ private:
 
         if (settings_.showNet) {
             const std::wstring netValue = L"D " + FormatRate(displaySnapshot_.netDown) + L"   U " + FormatRate(displaySnapshot_.netUp);
-            DrawInfoRow(y, L"NET", L"", netValue);
+            DrawInfoRow(y, L"NET", netValue);
             nextRow();
         }
 
         if (settings_.showDisk) {
             const std::wstring diskValue = L"R " + FormatRate(displaySnapshot_.diskRead) + L"   W " + FormatRate(displaySnapshot_.diskWrite);
-            DrawInfoRow(y, L"DISK", L"", diskValue);
+            DrawInfoRow(y, L"DISK", diskValue);
         }
 
         renderTarget_->PopAxisAlignedClip();
@@ -1940,6 +1944,12 @@ private:
                 if (renderTarget_) {
                     renderTarget_->Resize(D2D1::SizeU(LOWORD(lParam), HIWORD(lParam)));
                 }
+                // Resizing discards the render target's contents, so the whole
+                // window has to be repainted - not just the metric rows that
+                // InvalidateMetrics() covers. Without this the header strip
+                // keeps the discarded (blank) pixels after a row is toggled,
+                // because the window class has no CS_VREDRAW.
+                InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             case WM_DPICHANGED: {
                 dpi_ = HIWORD(wParam);
