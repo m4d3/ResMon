@@ -1,0 +1,12 @@
+ResMon 1.7.4 - Direct2D/WIC logo rendering fix
+
+Header branding:
+- The EXE/window icon still uses the supplied resmon.ico package.
+- The in-app header logo is embedded as a transparent 128 px PNG resource.
+- Windows Imaging Component decodes it once into a cached Direct2D bitmap.
+- There is no child STATIC control and no GDI DrawIconEx path for the header logo.
+- Normal metric/tween repaints invalidate only the rows, leaving the header untouched.
+- Logo size remains 27 DIP; overall window dimensions are unchanged.
+
+Everything else from 1.7.x remains: native C++/Win32, optional PawnIO CPU temperatures,
+NVML NVIDIA GPU temperature support, row visibility controls, themes, opacity, and short-lived easing.

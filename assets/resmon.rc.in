@@ -1,0 +1,38 @@
+#include <windows.h>
+
+101 ICON "@CMAKE_CURRENT_SOURCE_DIR@/assets/resmon.ico"
+301 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/vendor/IntelMSR.bin"
+302 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/vendor/AMDFamily17.bin"
+303 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/vendor/PawnIO_setup.exe"
+401 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/resmon-header-128.png"
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,7,4,0
+ PRODUCTVERSION 1,7,4,0
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "ResMon"
+            VALUE "FileDescription", "ResMon native resource monitor"
+            VALUE "FileVersion", "1.7.4"
+            VALUE "InternalName", "ResMon"
+            VALUE "OriginalFilename", "ResMon.exe"
+            VALUE "ProductName", "ResMon"
+            VALUE "ProductVersion", "1.7.4"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

@@ -1,0 +1,53 @@
+# ---- Build output ----
+build/
+build_*/
+out/
+package/
+*.dir/
+Release/
+Debug/
+x64/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+
+# ---- MSBuild / Visual Studio ----
+.vs/
+*.sln
+*.slnx
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.suo
+*.user
+*.aps
+*.pdb
+*.ilk
+*.idb
+*.obj
+*.exp
+*.lib
+*.tlog
+*.log
+*.exe
+*.msix
+*.appx
+*.zip
+
+# ---- Generated resource script ----
+resmon.rc
+
+# ---- Third-party sensor binaries (downloaded by FETCH_SENSOR_DEPS.ps1) ----
+vendor/PawnIO_setup.exe
+vendor/IntelMSR.bin
+vendor/AMDFamily17.bin
+
+# ---- Editor / OS noise ----
+.idea/
+.vscode/
+*.swp
+*~
+Thumbs.db
+desktop.ini
+ehthumbs.db
