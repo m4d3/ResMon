@@ -1,6 +1,6 @@
 # Third-party sensor components
 
-ResMon itself is MIT licensed. The enhanced-temperature build fetches and embeds these upstream components at build time:
+ResMon itself is MIT licensed (see `LICENSE`). The enhanced-temperature build fetches and embeds these upstream components at build time:
 
 ## PawnIO 2.2.0
 
